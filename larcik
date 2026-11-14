@@ -1,0 +1,401 @@
+#!/usr/bin/env python3
+
+import argparse
+import ipaddress
+import json
+import os
+import signal
+import subprocess
+import sys
+from pathlib import Path, PosixPath, PurePosixPath
+from subprocess import DEVNULL
+from typing import List, Optional
+
+CONF_DIR = Path.home() / ".config/larcik"
+XDG_RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getegid()}")
+HOOKS_DIR = PosixPath(XDG_RUNTIME_DIR) / "larcik/hooks.d"
+
+PODMAN_GLOBAL_ARGS = [
+    "--log-level", "error"
+]
+
+
+def git_is_inside_work_tree() -> bool:
+    cmd = ["git", "rev-parse", "--is-inside-work-tree"]
+    ret = subprocess.run(cmd, stdout=DEVNULL, stderr=DEVNULL)
+    return ret.returncode == 0
+
+
+def git_common_dir() -> Path:
+    cmd = ["git", "rev-parse", "--git-common-dir"]
+    out = subprocess.check_output(cmd)
+    return PosixPath(out.decode().strip())
+
+
+def get_volumes() -> List[str]:
+    mount_rw = [
+        Path.cwd(),
+    ]
+
+    # Let's keep this somewhat minimal, and leave some unusual paths to be
+    # configured in ~/.config/larcik/larcik.cfg
+    mount_ro = [
+        Path.home() / ".bashrc",
+        Path.home() / ".config/fish",
+        Path.home() / ".config/nvim",
+        Path.home() / ".gitconfig",
+        Path.home() / ".vimrc",
+        Path.home() / ".zshrc",
+    ]
+
+    if git_is_inside_work_tree():
+        # Resolve git common dir for the cases when repo is checked out in a
+        # separate worktree
+        d = git_common_dir().absolute()
+        # .git dir is mounted as rw so that it would be possible to create
+        # commits, checkout other branches and such
+        mount_rw.append(d)
+        # but more "dangerous" things like git hooks or git config are not
+        # writable inside of the container
+        mount_ro.append(d / "config")
+        mount_ro.append(d / "hooks")
+
+    volumes = [
+        "--volume", f"{os.path.abspath(__file__)}:/usr/bin/larcik:ro",
+    ]
+
+    for path in mount_rw:
+        if path.exists():
+            volumes.extend(["--volume", f"{path}:{path}"])
+
+    for path in mount_ro:
+        if path.exists():
+            volumes.extend(["--volume", f"{path}:{path}:ro"])
+
+    return volumes
+
+
+def podman_create(name: str, net: str) -> None:
+    image_name = "registry.fedoraproject.org/fedora-toolbox:45"
+
+    network_opts = []
+    if net == "none":
+        network_opts = ["--network", "none"]
+
+    cmd = [
+        "podman",
+        *PODMAN_GLOBAL_ARGS,
+        "create",
+        "--cgroupns", "host",
+        "--hostname", "larcik",
+        "--label", "com.dseight.larcik=true",
+        "--label", f"com.dseight.larcik.wd={Path.cwd()}",
+        "--annotation", f"com.dseight.larcik.network={net}",
+        "--name", name,
+        "--no-hosts",
+        *network_opts,
+        "--security-opt", "label=disable",
+        "--userns", "keep-id",
+        "--passwd-entry", f"$USERNAME:*:$UID:$GID:$NAME:{Path.home()}:/bin/sh",
+        "--mount", f"type=tmpfs,tmpfs-size=1024M,destination={Path.home()}",
+        *get_volumes(),
+        "--workdir", Path.cwd(),
+        image_name,
+        "larcik",
+        "init-container",
+    ]
+
+    subprocess.check_call(cmd, stdout=DEVNULL)
+
+
+def podman_start(name: str) -> None:
+    cmd = [
+        "podman",
+        *PODMAN_GLOBAL_ARGS,
+        "--hooks-dir", HOOKS_DIR,
+        "start",
+        name,
+    ]
+    subprocess.check_call(cmd, stdout=DEVNULL)
+
+
+def podman_stop(name: str) -> None:
+    cmd = [
+        "podman",
+        *PODMAN_GLOBAL_ARGS,
+        "stop",
+        name,
+    ]
+    subprocess.check_call(cmd, stdout=DEVNULL)
+
+
+def podman_rm(name: str) -> None:
+    cmd = [
+        "podman",
+        *PODMAN_GLOBAL_ARGS,
+        "rm",
+        name,
+    ]
+    subprocess.check_call(cmd, stdout=DEVNULL)
+
+
+def podman_ps() -> List[str]:
+    cmd = [
+        "podman", "ps", "--all",
+        "--filter", "label=com.dseight.larcik=true",
+        "--format", "{{ .Names }}",
+    ]
+    return subprocess.check_output(cmd).decode().splitlines()
+
+
+def podman_check_file_exists(name: str, path: str) -> bool:
+    cmd = [
+        "podman",
+        *PODMAN_GLOBAL_ARGS,
+        "cp",
+        f"{name}:{path}",
+        "-",
+    ]
+    try:
+        subprocess.check_call(cmd, stdout=DEVNULL, stderr=DEVNULL)
+        return True
+    except:
+        return False
+
+
+def get_larcik_workdir(name: str) -> Optional[Path]:
+    try:
+        subprocess.check_call(["podman", "container", "exists", name])
+    except subprocess.CalledProcessError:
+        return None
+
+    out = subprocess.check_output([
+        "podman", "inspect",
+        "--type", "container",
+        "--format", '{{ index .Config.Labels "com.dseight.larcik.wd" }}',
+        name,
+    ])
+
+    return PurePosixPath(out.decode().strip())
+
+
+def update_hooks() -> None:
+    HOOKS_DIR.mkdir(parents=True, exist_ok=True)
+
+    hook = {
+        "version": "1.0.0",
+        "hook": {
+            "path": os.path.abspath(__file__),
+            "args": ["larcik", "run-hooks"],
+        },
+        "when": {
+            "annotations": {
+                "com.dseight.larcik.network": ".*"
+            }
+        },
+        "stages": ["prestart"]
+    }
+
+    hooks_file = HOOKS_DIR / "10-larcik.json"
+    hooks_file.write_text(json.dumps(hook, indent=4) + "\n")
+
+
+def _ensure_container_exists(name: str) -> None:
+    if name not in podman_ps():
+        sys.exit(f"No container with name {name} available, or available container is not a created by larcik")
+
+
+def get_default_name() -> str:
+    # Try to use default name first
+    name = f"larcik-{Path.cwd().name}"
+
+    wd_used_by_name = get_larcik_workdir(name)
+
+    # If the default name is used together with another workdir (maybe user has
+    # a dir named "project" in two places?), ask to provide explicit name.
+    if wd_used_by_name and wd_used_by_name != Path.cwd():
+        sys.exit(
+            f"The default name ('{name}') is already used together with another "
+            "workdir (see `larcik list`). Use another name by providing it "
+            f"explicitly, e.g. '{name}-2'."
+        )
+
+    return name
+
+
+def parse_net_arg(arg: str) -> str:
+    if arg in ("none", "local", "web", "all"):
+        return arg
+
+    if not arg.startswith("ip:"):
+        print(f"Error: unknown value for --net option ('{arg}')")
+        print("Falling back to 'none' for network access.")
+        return "none"
+
+    ips = arg[3:]
+
+    for ip in ips.split(","):
+        try:
+            ipaddress.IPv4Address(ip)
+        except ipaddress.AddressValueError as e:
+            print(f"Error: --net {arg} option has invalid value. {e}")
+            print("Falling back to 'none' for network access.")
+            return "none"
+
+    return ips
+
+
+def _cmd_open(args: argparse.Namespace):
+    name = args.name if args.name else get_default_name()
+    net = parse_net_arg(args.net) if args.net else "none"
+
+    may_create = True
+    may_exec = True
+
+    if args.exec_only:
+        may_create = False
+    if args.create_only:
+        may_exec = False
+
+    if may_create and name not in podman_ps():
+        podman_create(name, net)
+
+    update_hooks()
+    # XXX: run only if stopped?
+    podman_start(name)
+
+    if not may_exec:
+        return
+
+    _ensure_container_exists(name)
+
+    # Check if user's shell exists in the container. If not, gracefully
+    # fallback to /bin/bash, and then to /bin/sh
+    shells = [os.environ["SHELL"], "/bin/bash", "/bin/sh"]
+
+    for sh in shells:
+        if podman_check_file_exists(name, sh):
+            os.execl("/usr/bin/podman", "podman", "exec", "-it", name, sh, "-l")
+
+    sys.exit(f"No shell found in the container. Tried: {', '.join(shells)}")
+
+
+def _cmd_close(args: argparse.Namespace):
+    name = args.name if args.name else get_default_name()
+
+    _ensure_container_exists(name)
+
+    podman_stop(name)
+    podman_rm(name)
+
+
+def _cmd_list(args: argparse.Namespace):
+    subprocess.call([
+        "podman", "ps", "--all",
+        "--filter", "label=com.dseight.larcik=true",
+        "--format", '{{ .Names }} (at {{ .Label "com.dseight.larcik.wd" }})'
+    ])
+
+
+    subprocess.call(cmd)
+
+
+def _cmd_run_hooks(args: argparse.Namespace):
+    config = json.load(sys.stdin)
+    pid = config["pid"]
+    net = config["annotations"]["com.dseight.larcik.network"]
+
+    if net in ("all", "none"):
+        return
+
+    if net == "web":
+        nft_conf = b"""
+table inet filter {
+    chain output {
+        type filter hook output priority filter; policy accept;
+        ip daddr 192.168.0.0/16 drop
+    }
+}
+"""
+    elif net == "local":
+        nft_conf = b"""
+table inet filter {
+    chain output {
+        type filter hook output priority filter; policy drop;
+        ip daddr 192.168.0.0/16 accept
+    }
+}
+"""
+    else:
+        nft_conf_tmp = """
+table inet filter {
+    chain output {
+        type filter hook output priority filter; policy drop;
+        ip daddr { IPS } accept
+    }
+}
+"""
+        nft_conf = nft_conf_tmp.replace("IPS", net).encode("utf-8")
+
+    cmd = ["nsenter", "-t", str(pid), "-n", "nft", "-f", "/dev/stdin"]
+    subprocess.run(cmd, input=nft_conf)
+
+
+def _cmd_init_container(args: argparse.Namespace):
+    # TODO: check that we run inside of a container first
+
+    def handle_sigterm(signum, frame):
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, handle_sigterm)
+    signal.pause()
+    sys.exit(0)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    subparsers = parser.add_subparsers(dest="subcommand", title="subcommands")
+
+    cmd_open = subparsers.add_parser("open", help="easy to open!")
+    cmd_open.add_argument("name", nargs="?", help="Name of the container")
+    group = cmd_open.add_mutually_exclusive_group()
+    group.add_argument("--create-only", action="store_true",
+                       help="Only create container, but don't exec it")
+    group.add_argument("--exec-only", action="store_true",
+                       help="Exec container, but don't try to create one if not exist")
+    cmd_open.add_argument(
+        "-n",
+        "--net",
+        default="none",
+        help="allow access to network ('none', 'local', 'web', 'all' or 'ip:<comma-separated list of ipv4 addresses>'), default 'none'"
+    )
+    cmd_open.set_defaults(func=_cmd_open)
+
+    cmd_close = subparsers.add_parser("close", help="... and close")
+    cmd_close.add_argument("name", nargs="?", help="Name of the container")
+    cmd_close.set_defaults(func=_cmd_close)
+
+    cmd_list = subparsers.add_parser("list", help="let's see what you have there")
+    cmd_list.set_defaults(func=_cmd_list)
+
+    cmd_run_hooks = subparsers.add_parser("run-hooks")
+    cmd_run_hooks.set_defaults(func=_cmd_run_hooks)
+
+    cmd_init_container = subparsers.add_parser("init-container")
+    cmd_init_container.set_defaults(func=_cmd_init_container)
+
+    args = parser.parse_args()
+
+    if not args.subcommand:
+        parser.error("subcommand required!")
+
+    args.func(args)
+
+    # TODO:
+    # - warn if submodules are not absorbed? (that would mean that hooks still
+    #   can be installed on submodules)
+
+
+if __name__ == "__main__":
+    main()
