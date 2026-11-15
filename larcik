@@ -290,12 +290,19 @@ def _cmd_close(args: argparse.Namespace):
 
 
 def _cmd_list(args: argparse.Namespace):
-    subprocess.call([
-        "podman", "ps", "--all",
-        "--filter", "label=com.dseight.larcik=true",
-        "--format", '{{ .Names }} (at {{ .Label "com.dseight.larcik.wd" }})'
-    ])
+    containers = podman_ps()
 
+    if not containers:
+        return
+
+    # TODO: maybe colorize this a little bit?
+    cmd = [
+        "podman", "container", "inspect",
+        "--format", '{{ .Name }} at ' +
+        '{{ index .Config.Labels "com.dseight.larcik.wd" }} ' +
+        'with net access to {{ index .Config.Annotations "com.dseight.larcik.network" }}',
+        *containers
+    ]
 
     subprocess.call(cmd)
 
