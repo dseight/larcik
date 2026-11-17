@@ -38,7 +38,7 @@ def get_volumes() -> List[str]:
     ]
 
     # Let's keep this somewhat minimal, and leave some unusual paths to be
-    # configured in ~/.config/larcik/larcik.cfg
+    # configured manually
     mount_ro = [
         Path.home() / ".bashrc",
         Path.home() / ".config/fish",
@@ -47,6 +47,8 @@ def get_volumes() -> List[str]:
         Path.home() / ".vimrc",
         Path.home() / ".zshrc",
     ]
+
+    # TODO: allow to expand the list of mounts in ~/.config/larcik/larcik.cfg
 
     if git_is_inside_work_tree():
         # Resolve git common dir for the cases when repo is checked out in a
@@ -76,6 +78,7 @@ def get_volumes() -> List[str]:
 
 
 def podman_create(name: str, net: str) -> None:
+    # TODO: don't hardcode image name. Pick one from options, or from config.
     image_name = "registry.fedoraproject.org/fedora-toolbox:45"
 
     network_opts = []
@@ -249,6 +252,11 @@ def _cmd_open(args: argparse.Namespace):
     name = args.name if args.name else get_default_name()
     net = parse_net_arg(args.net) if args.net else "none"
 
+    # TODO: if container was created with --net all, but then user requests
+    # --net none in the same place, print a BIG RED ERROR that a new container
+    # with a new name must be created instead. Otherwise one might think that
+    # network is blocked, while it is not.
+
     may_create = True
     may_exec = True
 
@@ -311,6 +319,8 @@ def _cmd_run_hooks(args: argparse.Namespace):
     config = json.load(sys.stdin)
     pid = config["pid"]
     net = config["annotations"]["com.dseight.larcik.network"]
+
+    # XXX: it is hard to debug hooks when they fail
 
     if net in ("all", "none"):
         return
@@ -386,6 +396,7 @@ def main():
     cmd_list = subparsers.add_parser("list", help="let's see what you have there")
     cmd_list.set_defaults(func=_cmd_list)
 
+    # TODO: find a way to hide run-hooks and init-container from -h/--help
     cmd_run_hooks = subparsers.add_parser("run-hooks")
     cmd_run_hooks.set_defaults(func=_cmd_run_hooks)
 
