@@ -2,6 +2,17 @@
 
 Like a box, but small.
 
+## What is this?
+
+This is a small containerization solution, primarily aimed for running not so
+trustworthy binaries inside of it.
+
+When you open larcik, you will have only the following available inside:
+- your work directory
+- if the work directory happened to be a git worktree, .git/config and .git/hooks
+  are going to be R/O
+- some of your config files (R/O), such as `~/.vimrc`, `~/.gitconfig`, etc.
+
 ## Design
 
 Larčik is inspired by [toolbx] and [devkit].
@@ -11,7 +22,7 @@ it lacks isolation (by design). devkit goes the opposite way: you only get your
 worktree and nothing else (and also adds agents as the "first-class citizen").
 
 While designing this, I wanted to have a tool that is somewhat middleground:
-you only get your worktree in the container, but not the surroundings. Apart
+you get your worktree in the container, but not the surroundings. And apart
 from the worktree you get some of your configuration files (like .vimrc), but
 no sensitive data like ssh keys.
 
@@ -22,15 +33,9 @@ example, you can get a container that only has access to web, but no access to
 your home network. Or the opposite: local network, without web access.
 
 Some basic principles of the project:
-- no external dependencies
+- no external dependencies (meaning no extra python packages)
 - no sudo/root access
 - network access is disabled by default
-
-TODO: write a meaningful section describing features:
-- container sees the workdir where you started it, and some of your config
-  files (e.g., .vimrc)
-- if workdir is a git repo, some actions are restricted (such as modifying git
-  hooks, modifying git config, etc)
 
 ## Usage
 
@@ -41,6 +46,19 @@ Run the following command in a directory you want to start working with:
 when container is no longer needed, you can close it with:
 
     larcik close
+
+When starting larčik, you can limit network access. For example, you can say
+that it's only allowed to access a couple of your machines in local net:
+
+    larcik open --net ip:192.168.0.2,192.168.0.10
+
+or that it can only access web, but not local network:
+
+    larcik open --net web
+
+## Configuration
+
+TBD
 
 ## License
 
