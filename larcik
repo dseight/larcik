@@ -9,6 +9,7 @@ import subprocess
 import sys
 from configparser import ConfigParser, UNNAMED_SECTION
 from pathlib import Path, PosixPath, PurePosixPath
+from string import Formatter
 from subprocess import DEVNULL
 from typing import List, Optional
 
@@ -27,6 +28,8 @@ class Config:
         self.wd = wd
         self.image = image
         self.net = net
+        self.mount_rw: List[Path] = []
+        self.mount_ro: List[Path] = []
 
     @staticmethod
     def load() -> "Config":
@@ -49,7 +52,21 @@ class Config:
         image = parser.getstr(UNNAMED_SECTION, "image", fallback="ubuntu:latest")
         net = parser.getstr(UNNAMED_SECTION, "net", fallback="none")
 
-        return Config(wd, image, net)
+        cfg = Config(wd, image, net)
+
+        cfg.mount_rw.extend(Config._load_paths(parser, "mount rw"))
+        cfg.mount_ro.extend(Config._load_paths(parser, "mount ro"))
+
+        return cfg
+
+    @staticmethod
+    def _load_paths(parser: ConfigParser, section: str) -> Iterable[Path]:
+        if section not in parser:
+            return
+
+        fmt = Formatter()
+        for item in parser.items(section):
+            yield Path(fmt.vformat(item[0], [], os.environ))
 
 
 def git_is_inside_work_tree() -> bool:
@@ -64,7 +81,7 @@ def git_common_dir() -> Path:
     return PosixPath(out.decode().strip())
 
 
-def get_volumes() -> List[str]:
+def get_volumes(cfg: Config) -> List[str]:
     mount_rw = [
         Path.cwd(),
     ]
@@ -80,8 +97,6 @@ def get_volumes() -> List[str]:
         Path.home() / ".vimrc",
         Path.home() / ".zshrc",
     ]
-
-    # TODO: allow to expand the list of mounts in ~/.config/larcik/larcik.cfg
 
     if git_is_inside_work_tree():
         # Resolve git common dir for the cases when repo is checked out in a
@@ -99,11 +114,11 @@ def get_volumes() -> List[str]:
         "--volume", f"{os.path.abspath(__file__)}:/usr/bin/larcik:ro",
     ]
 
-    for path in mount_rw:
+    for path in mount_rw + cfg.mount_rw:
         if path.exists():
             volumes.extend(["--volume", f"{path}:{path}"])
 
-    for path in mount_ro:
+    for path in mount_ro + cfg.mount_ro:
         if path.exists():
             volumes.extend(["--volume", f"{path}:{path}:ro"])
 
@@ -131,7 +146,7 @@ def podman_create(name: str, cfg: Config) -> None:
         "--userns", "keep-id",
         "--passwd-entry", f"$USERNAME:*:$UID:$GID:$NAME:{Path.home()}:/bin/sh",
         "--mount", f"type=tmpfs,tmpfs-size=1024M,destination={Path.home()}",
-        *get_volumes(),
+        *get_volumes(cfg),
         "--workdir", cfg.wd,
         cfg.image,
         "larcik",
@@ -301,6 +316,10 @@ def _cmd_open(args: argparse.Namespace):
     cfg = Config.load()
     if args.net:
         cfg.net = parse_net_arg(args.net)
+    if args.mount_rw:
+        cfg.mount_rw.extend(args.mount_rw)
+    if args.mount_ro:
+        cfg.mount_ro.extend(args.mount_ro)
 
     if may_create and name not in podman_ps():
         podman_create(name, cfg)
@@ -422,6 +441,22 @@ def main():
         "-n",
         "--net",
         help="allow access to network ('none', 'local', 'web', 'all' or 'ip:<comma-separated list of ipv4 addresses>'), default 'none'"
+    )
+    cmd_open.add_argument(
+        "-r",
+        "--mount-rw",
+        nargs="+",
+        metavar="PATH",
+        type=Path,
+        help="Mount extra path(s) as R/W"
+    )
+    cmd_open.add_argument(
+        "-w",
+        "--mount-ro",
+        nargs="+",
+        metavar="PATH",
+        type=Path,
+        help="Mount extra path(s) as R/O"
     )
     cmd_open.set_defaults(func=_cmd_open)
 

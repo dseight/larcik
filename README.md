@@ -67,6 +67,26 @@ E.g., you can override what image is used by default:
 image = ubuntu:26.10
 ```
 
+Or what extra paths you want to mount:
+
+```ini
+[mount rw]
+    # Mount /tmp from host system
+    /tmp
+
+[mount ro]
+    /mnt
+```
+
+In mount entries it is allowed to use environment variables, enclosed in `{}`.
+For example, this is how you can mount extra configs from home directory:
+
+```ini
+[mount ro]
+    {HOME}/.config/fish
+    {HOME}/.config/nvim
+```
+
 ## License
 
 Licensed under [MIT License](LICENSE).
