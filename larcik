@@ -40,6 +40,7 @@ def get_volumes() -> List[str]:
     # Let's keep this somewhat minimal, and leave some unusual paths to be
     # configured manually
     mount_ro = [
+        Path.home() / ".bash_profile",
         Path.home() / ".bashrc",
         Path.home() / ".config/fish",
         Path.home() / ".config/nvim",
