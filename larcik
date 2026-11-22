@@ -433,6 +433,8 @@ def _cmd_open(args: argparse.Namespace):
         may_exec = False
 
     cfg = Config.load()
+    if args.image:
+        cfg.image = args.image
     if args.net:
         cfg.net = parse_net_arg(args.net)
     if args.mount_rw:
@@ -562,6 +564,7 @@ def main():
                        help="Only create container, but don't exec it")
     group.add_argument("-e", "--exec-only", action="store_true",
                        help="Exec container, but don't try to create one if not exist")
+    cmd_open.add_argument("-i", "--image", help="Container image to use")
     cmd_open.add_argument(
         "-n",
         "--net",
