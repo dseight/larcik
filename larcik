@@ -7,17 +7,49 @@ import os
 import signal
 import subprocess
 import sys
+from configparser import ConfigParser, UNNAMED_SECTION
 from pathlib import Path, PosixPath, PurePosixPath
 from subprocess import DEVNULL
 from typing import List, Optional
 
 CONF_DIR = Path.home() / ".config/larcik"
+CONF_FILE = CONF_DIR / "larcik.cfg"
 XDG_RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getegid()}")
 HOOKS_DIR = PosixPath(XDG_RUNTIME_DIR) / "larcik/hooks.d"
 
 PODMAN_GLOBAL_ARGS = [
     "--log-level", "error"
 ]
+
+
+class Config:
+    def __init__(self, wd: Path, image: str, net: str):
+        self.wd = wd
+        self.image = image
+        self.net = net
+
+    @staticmethod
+    def load() -> "Config":
+        parser = ConfigParser(
+            allow_unnamed_section=True,
+            allow_no_value=True,
+            delimiters=("=",),
+            comment_prefixes=("#",),
+            interpolation=None,
+            converters={
+                # Strip double quotes around the strings
+                "str": (lambda s: s.strip('"')),
+            },
+        )
+        # Preserve case
+        parser.optionxform = str
+        parser.read(CONF_FILE)
+
+        wd = Path.cwd()
+        image = parser.getstr(UNNAMED_SECTION, "image", fallback="ubuntu:latest")
+        net = parser.getstr(UNNAMED_SECTION, "net", fallback="none")
+
+        return Config(wd, image, net)
 
 
 def git_is_inside_work_tree() -> bool:
@@ -78,12 +110,9 @@ def get_volumes() -> List[str]:
     return volumes
 
 
-def podman_create(name: str, net: str) -> None:
-    # TODO: don't hardcode image name. Pick one from options, or from config.
-    image_name = "registry.fedoraproject.org/fedora-toolbox:45"
-
+def podman_create(name: str, cfg: Config) -> None:
     network_opts = []
-    if net == "none":
+    if cfg.net == "none":
         network_opts = ["--network", "none"]
 
     cmd = [
@@ -93,8 +122,8 @@ def podman_create(name: str, net: str) -> None:
         "--cgroupns", "host",
         "--hostname", "larcik",
         "--label", "com.dseight.larcik=true",
-        "--label", f"com.dseight.larcik.wd={Path.cwd()}",
-        "--annotation", f"com.dseight.larcik.network={net}",
+        "--label", f"com.dseight.larcik.wd={cfg.wd}",
+        "--annotation", f"com.dseight.larcik.network={cfg.net}",
         "--name", name,
         "--no-hosts",
         *network_opts,
@@ -103,8 +132,8 @@ def podman_create(name: str, net: str) -> None:
         "--passwd-entry", f"$USERNAME:*:$UID:$GID:$NAME:{Path.home()}:/bin/sh",
         "--mount", f"type=tmpfs,tmpfs-size=1024M,destination={Path.home()}",
         *get_volumes(),
-        "--workdir", Path.cwd(),
-        image_name,
+        "--workdir", cfg.wd,
+        cfg.image,
         "larcik",
         "init-container",
     ]
@@ -255,7 +284,6 @@ def parse_net_arg(arg: str) -> str:
 
 def _cmd_open(args: argparse.Namespace):
     name = args.name if args.name else get_default_name()
-    net = parse_net_arg(args.net) if args.net else "none"
 
     # TODO: if container was created with --net all, but then user requests
     # --net none in the same place, print a BIG RED ERROR that a new container
@@ -270,8 +298,12 @@ def _cmd_open(args: argparse.Namespace):
     if args.create_only:
         may_exec = False
 
+    cfg = Config.load()
+    if args.net:
+        cfg.net = parse_net_arg(args.net)
+
     if may_create and name not in podman_ps():
-        podman_create(name, net)
+        podman_create(name, cfg)
 
     update_hooks()
     # XXX: run only if stopped?

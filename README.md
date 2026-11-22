@@ -58,7 +58,14 @@ or that it can only access web, but not local network:
 
 ## Configuration
 
-TBD
+You can put a config file into `~/.config/larcik/larcik.cfg` to override the
+defaults (including mounting of extra paths).
+
+E.g., you can override what image is used by default:
+
+```ini
+image = ubuntu:26.10
+```
 
 ## License
 
