@@ -25,7 +25,12 @@ PODMAN_GLOBAL_ARGS = [
 
 
 class Config:
-    def __init__(self, wd: Path, image: str, net: str):
+    def __init__(
+        self,
+        wd: Path = Path.cwd(),
+        image: str = "ubuntu:latest",
+        net: str = "none",
+    ):
         self.wd = wd
         self.image = image
         self.net = net
@@ -34,6 +39,11 @@ class Config:
 
     @staticmethod
     def load() -> "Config":
+        cfg = Config()
+        cfg.update_from_path(CONF_FILE)
+        return cfg
+
+    def update_from_path(self, path: Path) -> None:
         parser = ConfigParser(
             allow_unnamed_section=True,
             allow_no_value=True,
@@ -47,18 +57,19 @@ class Config:
         )
         # Preserve case
         parser.optionxform = str
-        parser.read(CONF_FILE)
+        parser.read(path)
 
-        wd = Path.cwd()
-        image = parser.getstr(UNNAMED_SECTION, "image", fallback="ubuntu:latest")
-        net = parser.getstr(UNNAMED_SECTION, "net", fallback="none")
+        image = parser.getstr(UNNAMED_SECTION, "image", fallback=None)
+        if image:
+            self.image = image
 
-        cfg = Config(wd, image, net)
+        net = parser.getstr(UNNAMED_SECTION, "net", fallback=None)
+        if net:
+            self.net = net
 
-        cfg.mount_rw.extend(Config._load_paths(parser, "mount rw"))
-        cfg.mount_ro.extend(Config._load_paths(parser, "mount ro"))
+        self.mount_rw.extend(Config._load_paths(parser, "mount rw"))
+        self.mount_ro.extend(Config._load_paths(parser, "mount ro"))
 
-        return cfg
 
     @staticmethod
     def _load_paths(parser: ConfigParser, section: str) -> Iterable[Path]:
