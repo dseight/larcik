@@ -151,6 +151,12 @@ def podman_ps() -> List[str]:
     return subprocess.check_output(cmd).decode().splitlines()
 
 
+def podman_container_exists(name: str) -> bool:
+    cmd = ["podman", "container", "exists", name]
+    ret = subprocess.run(cmd, stdout=DEVNULL, stderr=DEVNULL)
+    return ret.returncode == 0
+
+
 def podman_check_file_exists(name: str, path: str) -> bool:
     cmd = [
         "podman",
@@ -166,19 +172,13 @@ def podman_check_file_exists(name: str, path: str) -> bool:
         return False
 
 
-def get_larcik_workdir(name: str) -> Optional[Path]:
-    try:
-        subprocess.check_call(["podman", "container", "exists", name])
-    except subprocess.CalledProcessError:
-        return None
-
+def get_larcik_workdir(name: str) -> Path:
     out = subprocess.check_output([
         "podman", "inspect",
         "--type", "container",
         "--format", '{{ index .Config.Labels "com.dseight.larcik.wd" }}',
         name,
     ])
-
     return PurePosixPath(out.decode().strip())
 
 
@@ -212,11 +212,12 @@ def get_default_name() -> str:
     # Try to use default name first
     name = f"larcik-{Path.cwd().name}"
 
-    wd_used_by_name = get_larcik_workdir(name)
+    if not podman_container_exists(name):
+        return name
 
     # If the default name is used together with another workdir (maybe user has
     # a dir named "project" in two places?), ask to provide explicit name.
-    if wd_used_by_name and wd_used_by_name != Path.cwd():
+    if get_larcik_workdir(name) != Path.cwd():
         sys.exit(
             f"The default name ('{name}') is already used together with another "
             "workdir (see `larcik list`). Use another name by providing it "
