@@ -206,7 +206,10 @@ def update_hooks() -> None:
 
 def _ensure_container_exists(name: str) -> None:
     if name not in podman_ps():
-        sys.exit(f"No container with name {name} available, or available container is not a created by larcik")
+        sys.exit(
+            f"No container with name {name} available, "
+            "or available container is not a created by larcik"
+        )
 
 
 def get_default_name() -> str:
