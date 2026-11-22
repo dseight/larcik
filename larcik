@@ -40,7 +40,7 @@ class Config:
     def __init__(
         self,
         wd: Path = Path.cwd(),
-        image: str = "ubuntu:latest",
+        image: str = "registry.fedoraproject.org/fedora-toolbox:latest",
         net: str = "none",
     ):
         self.wd = wd
