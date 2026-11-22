@@ -24,6 +24,18 @@ PODMAN_GLOBAL_ARGS = [
 ]
 
 
+def git_is_inside_work_tree() -> bool:
+    cmd = ["git", "rev-parse", "--is-inside-work-tree"]
+    ret = subprocess.run(cmd, stdout=DEVNULL, stderr=DEVNULL)
+    return ret.returncode == 0
+
+
+def git_common_dir() -> Path:
+    cmd = ["git", "rev-parse", "--git-common-dir"]
+    out = subprocess.check_output(cmd)
+    return PosixPath(out.decode().strip())
+
+
 class Config:
     def __init__(
         self,
@@ -41,6 +53,7 @@ class Config:
     def load() -> "Config":
         cfg = Config()
         cfg.update_from_path(CONF_FILE)
+        cfg.update_from_git()
         return cfg
 
     def update_from_path(self, path: Path) -> None:
@@ -70,6 +83,46 @@ class Config:
         self.mount_rw.extend(Config._load_paths(parser, "mount rw"))
         self.mount_ro.extend(Config._load_paths(parser, "mount ro"))
 
+    def update_from_git(self) -> None:
+        if not git_is_inside_work_tree():
+            return
+
+        try:
+            cmd = ["git", "config", "--get-regexp", "larcik\\."]
+            out = subprocess.check_output(cmd)
+            raw_cfg = out.decode().strip()
+        except subprocess.CalledProcessError as e:
+            if e.returncode == 1:
+                # Missing "larcik" section
+                return
+            else:
+                raise
+
+        cfg = {
+            "mount-rw": [],
+            "mount-ro": [],
+        }
+
+        for line in raw_cfg.splitlines():
+            key, val = line.split(maxsplit=1)
+            # remove "larcik." prefix
+            key = key.split(".", maxsplit=1)[1]
+
+            if key in cfg and isinstance(cfg[key], list):
+                cfg[key].append(val)
+            else:
+                cfg[key] = val
+
+        image = cfg.get("image")
+        if image:
+            self.image = image
+
+        net = cfg.get("net")
+        if net:
+            self.net = net
+
+        self.mount_rw.extend([Config._expand_path(x) for x in cfg["mount-rw"]])
+        self.mount_ro.extend([Config._expand_path(x) for x in cfg["mount-ro"]])
 
     @staticmethod
     def _load_paths(parser: ConfigParser, section: str) -> Iterable[Path]:
@@ -111,18 +164,6 @@ class Config:
             d.update(str(x).encode())
 
         return d.hexdigest()
-
-
-def git_is_inside_work_tree() -> bool:
-    cmd = ["git", "rev-parse", "--is-inside-work-tree"]
-    ret = subprocess.run(cmd, stdout=DEVNULL, stderr=DEVNULL)
-    return ret.returncode == 0
-
-
-def git_common_dir() -> Path:
-    cmd = ["git", "rev-parse", "--git-common-dir"]
-    out = subprocess.check_output(cmd)
-    return PosixPath(out.decode().strip())
 
 
 def get_volumes(cfg: Config) -> List[str]:

@@ -58,6 +58,8 @@ or that it can only access web, but not local network:
 
 ## Configuration
 
+### Global configuration
+
 You can put a config file into `~/.config/larcik/larcik.cfg` to override the
 defaults (including mounting of extra paths).
 
@@ -86,6 +88,24 @@ For example, this is how you can mount extra configs from home directory:
     {HOME}/.config/fish
     {HOME}/.config/nvim
 ```
+
+### Repo configuration
+
+Configuration can further be changed for a given git repo.
+
+For example, if you want to start a different image by default, when larcik is
+opened in the current repo:
+
+    git config --local larcik.image fedora:latest
+
+Or you can add a mount point that will automatically be addded, when larcik is
+opened in the current repo:
+
+    git config --local --add larcik.mount-rw "{HOME}/.buildroot-dl"
+
+You can always edit what you've added manually with:
+
+    git config edit
 
 ## License
 
