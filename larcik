@@ -384,7 +384,6 @@ def main():
     cmd_open.add_argument(
         "-n",
         "--net",
-        default="none",
         help="allow access to network ('none', 'local', 'web', 'all' or 'ip:<comma-separated list of ipv4 addresses>'), default 'none'"
     )
     cmd_open.set_defaults(func=_cmd_open)
