@@ -76,9 +76,13 @@ class Config:
         if section not in parser:
             return
 
-        fmt = Formatter()
         for item in parser.items(section):
-            yield Path(fmt.vformat(item[0], [], os.environ))
+            yield Config._expand_path(item[0])
+
+    @staticmethod
+    def _expand_path(path: str) -> Path:
+        fmt = Formatter()
+        return Path(fmt.vformat(path, [], os.environ))
 
     def hash(self) -> str:
         d = hashlib.sha1()
