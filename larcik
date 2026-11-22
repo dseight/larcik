@@ -219,6 +219,7 @@ def podman_create(name: str, cfg: Config) -> None:
         "podman",
         *PODMAN_GLOBAL_ARGS,
         "create",
+        "--init",
         "--cgroupns", "host",
         "--hostname", "larcik",
         "--label", "com.dseight.larcik=true",
@@ -235,8 +236,9 @@ def podman_create(name: str, cfg: Config) -> None:
         *get_volumes(cfg),
         "--workdir", cfg.wd,
         cfg.image,
-        "larcik",
-        "init-container",
+        "tail",
+        "-f",
+        "/dev/null",
     ]
 
     subprocess.check_call(cmd, stdout=DEVNULL)
@@ -541,17 +543,6 @@ table inet filter {
     subprocess.run(cmd, input=nft_conf)
 
 
-def _cmd_init_container(args: argparse.Namespace):
-    # TODO: check that we run inside of a container first
-
-    def handle_sigterm(signum, frame):
-        sys.exit(0)
-
-    signal.signal(signal.SIGTERM, handle_sigterm)
-    signal.pause()
-    sys.exit(0)
-
-
 def main():
     parser = argparse.ArgumentParser()
 
@@ -595,12 +586,9 @@ def main():
     cmd_list = subparsers.add_parser("list", help="let's see what you have there")
     cmd_list.set_defaults(func=_cmd_list)
 
-    # TODO: find a way to hide run-hooks and init-container from -h/--help
+    # TODO: find a way to hide run-hooks from -h/--help
     cmd_run_hooks = subparsers.add_parser("run-hooks")
     cmd_run_hooks.set_defaults(func=_cmd_run_hooks)
-
-    cmd_init_container = subparsers.add_parser("init-container")
-    cmd_init_container.set_defaults(func=_cmd_init_container)
 
     args = parser.parse_args()
 

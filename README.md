@@ -66,7 +66,7 @@ defaults (including mounting of extra paths).
 E.g., you can override what image is used by default:
 
 ```ini
-image = custom-ubuntu:latest
+image = ubuntu:latest
 ```
 
 Or what extra paths you want to mount:
@@ -96,7 +96,7 @@ Configuration can further be changed for a given git repo.
 For example, if you want to start a different image by default, when larcik is
 opened in the current repo:
 
-    git config --local larcik.image custom-fedora:latest
+    git config --local larcik.image fedora:latest
 
 Or you can add a mount point that will automatically be addded, when larcik is
 opened in the current repo:
@@ -106,11 +106,6 @@ opened in the current repo:
 You can always edit what you've added manually with:
 
     git config edit
-
-## Limitations
-
-As of now, the image used for larčik must contain python3 executable. Which is
-not the case in pure `ubuntu:latest` or `fedora:latest` images.
 
 ## License
 
