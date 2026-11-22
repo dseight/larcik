@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import hashlib
 import ipaddress
 import json
 import os
@@ -67,6 +68,34 @@ class Config:
         fmt = Formatter()
         for item in parser.items(section):
             yield Path(fmt.vformat(item[0], [], os.environ))
+
+    def hash(self) -> str:
+        d = hashlib.sha1()
+
+        d.update("wd".encode())
+        d.update(str(self.wd).encode())
+        d.update("net".encode())
+        d.update(self.net.encode())
+        d.update("image".encode())
+        d.update(self.image.encode())
+
+        # Field labels are added into the mix to e.g. distinguish between:
+        #
+        #     mount_rw = ["/etc"], mount_ro = []
+        #
+        # and:
+        #
+        #     mount_rw = [], mount_ro = ["/etc"]
+        #
+        d.update("mount_rw".encode())
+        for x in self.mount_rw:
+            d.update(str(x).encode())
+
+        d.update("mount_ro".encode())
+        for x in self.mount_ro:
+            d.update(str(x).encode())
+
+        return d.hexdigest()
 
 
 def git_is_inside_work_tree() -> bool:
@@ -139,6 +168,7 @@ def podman_create(name: str, cfg: Config) -> None:
         "--label", "com.dseight.larcik=true",
         "--label", f"com.dseight.larcik.wd={cfg.wd}",
         "--annotation", f"com.dseight.larcik.network={cfg.net}",
+        "--annotation", f"com.dseight.larcik.cfghash={cfg.hash()}",
         "--name", name,
         "--no-hosts",
         *network_opts,
@@ -227,6 +257,16 @@ def get_larcik_workdir(name: str) -> Path:
     return PurePosixPath(out.decode().strip())
 
 
+def get_larcik_cfghash(name: str) -> str:
+    out = subprocess.check_output([
+        "podman", "inspect",
+        "--type", "container",
+        "--format", '{{ index .Config.Annotations "com.dseight.larcik.cfghash" }}',
+        name,
+    ])
+    return out.decode().strip()
+
+
 def update_hooks() -> None:
     HOOKS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -254,6 +294,22 @@ def _ensure_container_exists(name: str) -> None:
             f"No container with name {name} available, "
             "or available container is not a created by larcik"
         )
+
+
+def _ensure_config_match(name: str, cfg: Config) -> None:
+    # For example, if container was created with --net all, but then user
+    # requests --net none in the same place, print a BIG RED ERROR that a new
+    # container with a new name must be created instead. Otherwise one might
+    # think that network is blocked, while it is not.
+
+    if get_larcik_cfghash(name) == cfg.hash():
+        return
+
+    sys.exit(
+        f"Container with name '{name}' is already created with different "
+        "configuration.  Close it, and re-run the above command, "
+        "or explicitly provide a new name."
+    )
 
 
 def get_default_name() -> str:
@@ -297,13 +353,20 @@ def parse_net_arg(arg: str) -> str:
     return ips
 
 
+def _has_options_set(args: argparse.Namespace) -> bool:
+    sub = getattr(args, "_subparser", None)
+    if not sub:
+        return False
+
+    return any(
+        getattr(args, action.dest) != sub.get_default(action.dest)
+        for action in sub._actions
+        if action.option_strings and action.dest != "help"
+    )
+
+
 def _cmd_open(args: argparse.Namespace):
     name = args.name if args.name else get_default_name()
-
-    # TODO: if container was created with --net all, but then user requests
-    # --net none in the same place, print a BIG RED ERROR that a new container
-    # with a new name must be created instead. Otherwise one might think that
-    # network is blocked, while it is not.
 
     may_create = True
     may_exec = True
@@ -332,6 +395,12 @@ def _cmd_open(args: argparse.Namespace):
         return
 
     _ensure_container_exists(name)
+
+    # If user has provided some options, then check if requested configuration
+    # matches what is already running. This will scream though when options are
+    # the same, but config file was changed.
+    if _has_options_set(args):
+        _ensure_config_match(name, cfg)
 
     # Check if user's shell exists in the container. If not, gracefully
     # fallback to /bin/bash, and then to /bin/sh
@@ -458,7 +527,7 @@ def main():
         type=Path,
         help="Mount extra path(s) as R/O"
     )
-    cmd_open.set_defaults(func=_cmd_open)
+    cmd_open.set_defaults(func=_cmd_open, _subparser=cmd_open)
 
     cmd_close = subparsers.add_parser("close", help="... and close")
     cmd_close.add_argument("name", nargs="?", help="Name of the container")
