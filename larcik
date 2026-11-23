@@ -12,7 +12,7 @@ from configparser import ConfigParser, UNNAMED_SECTION
 from pathlib import Path, PosixPath, PurePosixPath
 from string import Formatter
 from subprocess import DEVNULL
-from typing import List, Optional
+from typing import List, Iterable
 
 CONF_DIR = Path.home() / ".config/larcik"
 CONF_FILE = CONF_DIR / "larcik.cfg"
