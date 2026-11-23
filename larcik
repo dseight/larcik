@@ -9,7 +9,7 @@ import signal
 import subprocess
 import sys
 from configparser import ConfigParser, UNNAMED_SECTION
-from pathlib import Path, PosixPath, PurePosixPath
+from pathlib import Path, PosixPath
 from string import Formatter
 from subprocess import DEVNULL
 from typing import List, Iterable
@@ -312,7 +312,7 @@ def get_larcik_workdir(name: str) -> Path:
         "--format", '{{ index .Config.Labels "com.dseight.larcik.wd" }}',
         name,
     ])
-    return PurePosixPath(out.decode().strip())
+    return Path(out.decode().strip())
 
 
 def get_larcik_cfghash(name: str) -> str:
