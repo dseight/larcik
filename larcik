@@ -5,7 +5,6 @@ import hashlib
 import ipaddress
 import json
 import os
-import signal
 import subprocess
 import sys
 from configparser import ConfigParser, UNNAMED_SECTION
